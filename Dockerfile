@@ -29,8 +29,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app code
 COPY . .
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 RUN npx -y @playwright/mcp@0.0.45 --version \
-    && npx playwright install --with-deps chromium
+    && npx playwright install --with-deps chromium \
+    && chmod -R a+rX /ms-playwright
 
 # Create data directory (mount a volume here for persistence)
 RUN mkdir -p data logs services/cache/search
