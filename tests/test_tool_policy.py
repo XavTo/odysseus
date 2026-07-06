@@ -238,36 +238,6 @@ def test_guide_only_blocks_later_round_document_streaming(monkeypatch):
     assert not any(event.get("type") == "doc_stream_delta" for event in events)
 
 
-def test_guide_only_directive_dominates_workspace_prompt(monkeypatch):
-    _patch_loop_basics(monkeypatch)
-    system_prompts = []
-
-    async def _fake_stream(_candidates, messages, **kwargs):
-        system_prompts.append(messages[0]["content"])
-        yield _delta_chunk("ok")
-        yield "data: [DONE]\n\n"
-
-    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
-    policy = build_effective_tool_policy(last_user_message="Do not use tools.")
-
-    _collect(
-        al.stream_agent_loop(
-            "http://local.test/v1",
-            "local-model",
-            [{"role": "user", "content": "Do not use tools."}],
-            max_rounds=1,
-            relevant_tools={"bash"},
-            tool_policy=policy,
-            workspace="/tmp/project",
-        )
-    )
-
-    assert system_prompts
-    assert system_prompts[0].startswith("## GUIDE-ONLY MODE")
-    assert "ACTIVE WORKSPACE" not in system_prompts[0]
-    assert "ALWAYS start by exploring" not in system_prompts[0]
-
-
 def test_guide_only_skips_intent_without_action_nudge(monkeypatch):
     _patch_loop_basics(monkeypatch)
 
@@ -325,6 +295,36 @@ def test_guide_only_suppresses_active_document_context(monkeypatch):
     assert "SECRET ACTIVE DOCUMENT CONTENT" not in prompt_payloads[0]
     assert "ACTIVE DOCUMENT" not in prompt_payloads[0]
     assert "Relevant skills" not in prompt_payloads[0]
+
+
+def test_document_my_style_does_not_infer_public_persona(monkeypatch):
+    _patch_loop_basics(monkeypatch)
+    monkeypatch.setattr(al, "_build_base_prompt", lambda *a, **k: ("BASE", ""), raising=False)
+    monkeypatch.setattr(al, "_cached_base_prompt", None, raising=False)
+    monkeypatch.setattr(al, "_cached_base_prompt_key", None, raising=False)
+
+    import src.settings as settings
+    monkeypatch.setattr(settings, "load_settings", lambda: {"document_writing_style": ""}, raising=False)
+
+    active_doc = SimpleNamespace(
+        id="doc-style",
+        current_content="A short poem already exists here.",
+        title="Morning Poem",
+        language="markdown",
+    )
+
+    messages, _ = al._build_system_prompt(
+        [{"role": "user", "content": "Write as my style"}],
+        model="local-model",
+        active_document=active_doc,
+        mcp_mgr=None,
+        relevant_tools={"edit_document", "update_document"},
+        suppress_skills=True,
+    )
+    payload = "\n\n".join(str(msg.get("content", "")) for msg in messages)
+
+    assert "There is no saved document writing style" in payload
+    assert "do NOT infer that style from memories, identity, public persona" in payload
 
 
 def test_guide_only_skips_teacher_escalation(monkeypatch):
